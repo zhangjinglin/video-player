@@ -460,6 +460,7 @@ fn open_player_window(
     WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("player.html".into()))
         .title(&title)
         .inner_size(1100.0, 750.0)
+        .devtools(true)
         .build()
         .map_err(|e| format!("创建播放窗口失败: {e}"))?;
     eprintln!("[open_player_window] 已创建播放窗口 {label}，vod_id={vod_id}");
