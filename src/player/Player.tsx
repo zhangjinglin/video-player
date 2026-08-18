@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import Hls from "hls.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getEpisodes, getPlayerPayload, type Episode } from "../data/videos";
 
@@ -9,7 +10,9 @@ export default function Player() {
   const [selected, setSelected] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [playError, setPlayError] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
 
   // 双击视频切换全屏：Tauri 窗口级全屏，再次双击或按 Esc 退出
   const toggleFullscreen = async () => {
@@ -69,14 +72,50 @@ export default function Player() {
     })();
   }, []);
 
+  // 根据播放地址类型初始化播放器：m3u8 走 hls.js（WebView2/WKWebView 跨平台统一），mp4 直链走原生
+  const current = episodes[selected];
+  const currentUrl = current?.url ?? "";
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !currentUrl) return;
+    setPlayError("");
+
+    const isM3u8 = currentUrl.includes(".m3u8") || currentUrl.includes("m3u8");
+
+    if (isM3u8 && Hls.isSupported()) {
+      // hls.js 通过 MSE 播放，兼容 Windows WebView2（不支持原生 HLS）
+      const hls = new Hls({ enableWorker: false });
+      hlsRef.current = hls;
+      hls.loadSource(currentUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (data.fatal) {
+          setPlayError("播放失败：无法加载视频流（可能是源站限制或地址失效）");
+        }
+      });
+      return () => {
+        hls.destroy();
+        hlsRef.current = null;
+      };
+    } else if (isM3u8 && video.canPlayType("application/vnd.apple.mpegurl")) {
+      // 环境不支持 hls.js 但原生支持 HLS（旧版 WebKit）时的兜底
+      video.src = currentUrl;
+    } else {
+      // mp4 等直链
+      video.src = currentUrl;
+    }
+  }, [currentUrl]);
+
   if (loading) {
     return <div className="player-center">正在加载视频信息…</div>;
   }
   if (error) {
     return <div className="player-center player-error">{error}</div>;
   }
-
-  const current = episodes[selected];
+  if (!current) {
+    return <div className="player-center player-error">该视频暂无播放地址</div>;
+  }
 
   return (
     <div className="player-root">
@@ -103,11 +142,12 @@ export default function Player() {
           key={selected}
           ref={videoRef}
           className="player-video"
-          src={current.url}
           controls
           autoPlay
           onDoubleClick={toggleFullscreen}
+          onError={() => setPlayError("播放失败：无法加载该视频地址")}
         />
+        {playError && <div className="player-error-overlay">{playError}</div>}
       </div>
     </div>
   );
